@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/Deployables/">
+    <Project Path="Roadbed.Logging.Mcp/Roadbed.Logging.Mcp.csproj" Id="fc9e69e0-3753-4af6-abcd-7e74c3764cab" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="Roadbed.Logging.Mcp.Tests/Roadbed.Logging.Mcp.Tests.csproj" Id="b6e2d4a1-7c3f-4e58-9a0d-2f1c6b8e5a47" />
+  </Folder>
+  <Folder Name="/Solution Items/" />
+</Solution>
