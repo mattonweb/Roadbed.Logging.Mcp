@@ -11,7 +11,7 @@ This reference covers the abstractions only. For per-database guidance see the m
 | `IDataConnectionFactory`   | Interface | `Roadbed.Data` | Contract for creating already-open `IDbConnection` instances.    |
 | `DataConnecionString`      | Class     | `Roadbed.Data` | Connection-string builder with database-type templates.          |
 | `DataConnectionStringType` | Enum      | `Roadbed.Data` | `Unknown`, `SQLite`, `SQLiteInMemory`, `PostgreSQL`, `MySQL`.    |
-| `DataExecutorRequest`      | Class     | `Roadbed.Data` | Query + parameters + retry knobs consumed by the per-database executors. |
+| `DataExecutorRequest`      | Class     | `Roadbed.Data` | Query + parameters + retry knobs + per-query `CommandTimeoutInSeconds`, consumed by the per-database executors. |
 
 ## MUST
 
@@ -27,7 +27,8 @@ This reference covers the abstractions only. For per-database guidance see the m
 - **MUST NOT** inject `IDataConnectionFactory` directly into a repository. There is no way to distinguish multiple databases at DI resolution time.
 - **MUST NOT** call `connection.Open()` after `factory.CreateOpenConnectionAsync(...)`. The connection is already open — calling `Open()` throws.
 - **MUST NOT** forget the `using` on a connection. The factory does not pool or track its instances.
-- **MUST NOT** set `MaxRetries` or `DelayBetweenRetries` to negative values. They throw `ArgumentOutOfRangeException`. Use `RetriesEnabled = false` to disable retries.
+- **MUST NOT** set `MaxRetries`, `DelayBetweenRetries`, or `CommandTimeoutInSeconds` to negative values. They throw `ArgumentOutOfRangeException`. Use `RetriesEnabled = false` to disable retries; use `CommandTimeoutInSeconds = null` for the connection default or `0` for no timeout.
+- **MUST NOT** raise `CommandTimeoutInSeconds` without a code comment explaining why. The 5-second default is intentionally tight — reach for SQL optimization or a design change before extending the timeout.
 - **MUST NOT** roll your own retry loop around the per-database executors. They retry transient errors internally.
 
 ## Code patterns
@@ -150,7 +151,29 @@ var request = new DataExecutorRequest("UPDATE foo SET name = @Name WHERE id = @I
     DelayBetweenRetries = TimeSpan.FromMilliseconds(200),
     DelayMultiplierEnabled = true,   // 200ms, 400ms, 600ms, 800ms, 1000ms
 };
+
+// Per-query command-timeout override. The default is deliberately short (5s);
+// raising it ALWAYS warrants a comment explaining why optimizing the SQL was
+// not the answer.
+var request = new DataExecutorRequest("CALL rebuild_monthly_rollup(@Month)")
+{
+    Parameters = new { Month = month },
+    // Monthly rollup proc legitimately scans ~40M rows; verified can't be chunked. JIRA-1234.
+    CommandTimeoutInSeconds = 120,
+};
 ```
+
+### Command timeout: two tiers
+
+| Tier | Where | Meaning |
+| --- | --- | --- |
+| Global default | `DataConnecionString.CommandTimeoutInSeconds` (default **5**) | The command (statement) timeout for every execution on that connection. Set once at startup. |
+| Per-query override | `DataExecutorRequest.CommandTimeoutInSeconds` (default `null`) | Overrides the global default for one execution. `null` → use the connection default; `0` → no timeout (infinite); negative → throws. |
+
+This is the **command** timeout (how long a statement may run), distinct from
+`DataConnecionString.TimeoutInSeconds`, which is the **connection-open** timeout.
+The 5-second default is intentionally tight: a query that needs more is a prompt
+to optimize the SQL or rethink the design, not to silently raise the ceiling.
 
 ### Connection-string templates per database type
 
@@ -294,9 +317,10 @@ using Roadbed.Data.MySql;      // MySqlConnectionFactory
 
 ### `DataConnecionString` defaults
 
-| Property             | Default |
-| -------------------- | ------- |
-| `TimeoutInSeconds`   | `20`    |
+| Property                   | Default | Meaning                                    |
+| -------------------------- | ------- | ------------------------------------------ |
+| `TimeoutInSeconds`         | `20`    | Connection-open (connect) timeout.         |
+| `CommandTimeoutInSeconds`  | `5`     | Default command (statement) timeout.       |
 
 ### `DataExecutorRequest` defaults
 
@@ -306,6 +330,10 @@ using Roadbed.Data.MySql;      // MySqlConnectionFactory
 | `MaxRetries`              | `3`      |
 | `DelayBetweenRetries`     | `100ms`  |
 | `DelayMultiplierEnabled`  | `true`   |
+| `CommandTimeoutInSeconds` | `null`   |
+
+`CommandTimeoutInSeconds = null` falls back to the connection's
+`CommandTimeoutInSeconds` (default `5`); `0` = no timeout; negative throws.
 
 Linear backoff with default values: `100ms`, `200ms`, `300ms`.
 

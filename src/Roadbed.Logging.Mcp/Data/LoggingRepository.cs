@@ -30,6 +30,14 @@ public sealed class LoggingRepository : BaseClassWithLogging
     /// <summary>Activity retention horizon in days (operator drops older partitions).</summary>
     public const int ActivityRetentionDays = 365;
 
+    // Roadbed.Data's default command timeout is 5s — intentionally tight. Reads here cross
+    // monthly-partitioned activity (~365d retention) and log_entries (~90d retention) tables
+    // that grow steadily; even prune-aware aggregates can take several seconds against a
+    // warm cache and longer against a cold one. 60s is the project-wide ceiling that gives
+    // headroom for fleet rollups and history scans without leaving a stuck statement
+    // unbounded. Read-only DB account remains the safety backstop.
+    private const int CommandTimeoutSeconds = 60;
+
     private const string ActivitySummaryColumns =
         "a.id, a.created_on, a.application, a.environment, a.activity_type, a.activity_key, " +
         "a.target, a.status, a.started_on, a.completed_on, a.records_impacted, a.error_type, a.host";
@@ -68,6 +76,53 @@ public sealed class LoggingRepository : BaseClassWithLogging
 
     #endregion
 
+    #region Internal Static Methods - Shared aggregations
+
+    // 'skipped' is a terminal SUCCESS-class status (run completed but did no work).
+    // Excluding it from both numerator and denominator keeps an all-polite-304 window
+    // from reading as 0% success while also keeping it from inflating the rate when
+    // a few real failures are present.
+    internal static double? SuccessRate(long succeeded, long failed, long canceled)
+    {
+        var completed = succeeded + failed + canceled;
+        if (completed <= 0)
+        {
+            return null;
+        }
+
+        return Math.Round((double)succeeded / completed, 4);
+    }
+
+    internal static HistoryStats ComputeStats(IReadOnlyCollection<ActivityRow> rows)
+    {
+        var durations = rows
+            .Select(r => TimeFormat.DurationMs(r.StartedOn, r.CompletedOn))
+            .Where(d => d is not null)
+            .Select(d => d!.Value)
+            .OrderBy(d => d)
+            .ToList();
+
+        var succeeded = rows.Count(r => string.Equals(r.Status, "succeeded", StringComparison.Ordinal));
+        var failed = rows.Count(r => string.Equals(r.Status, "failed", StringComparison.Ordinal));
+        var canceled = rows.Count(r => string.Equals(r.Status, "canceled", StringComparison.Ordinal));
+        var skipped = rows.Count(r => string.Equals(r.Status, "skipped", StringComparison.Ordinal));
+        var impacted = rows.Where(r => r.RecordsImpacted is not null).Select(r => r.RecordsImpacted!.Value).ToList();
+
+        return new HistoryStats
+        {
+            Count = rows.Count,
+            Skipped = skipped,
+            SuccessRate = SuccessRate(succeeded, failed, canceled),
+            MinDurationMs = durations.Count > 0 ? durations[0] : null,
+            AvgDurationMs = durations.Count > 0 ? (long)Math.Round(durations.Average()) : null,
+            P95DurationMs = Percentile(durations, 0.95),
+            MaxDurationMs = durations.Count > 0 ? durations[^1] : null,
+            AvgRecordsImpacted = impacted.Count > 0 ? (long)Math.Round(impacted.Average()) : null,
+        };
+    }
+
+    #endregion
+
     #region Public Methods - Orientation & Triage
 
     /// <summary>
@@ -99,6 +154,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
             "GROUP BY a.application ORDER BY a.application")
         {
             RetriesEnabled = false,
+            CommandTimeoutInSeconds = CommandTimeoutSeconds,
             Parameters = new { since, until },
         };
 
@@ -108,6 +164,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
             "GROUP BY a.application, a.activity_key")
         {
             RetriesEnabled = false,
+            CommandTimeoutInSeconds = CommandTimeoutSeconds,
             Parameters = new { since, until },
         };
 
@@ -174,6 +231,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
             .Append(", CAST(SUM(a.status = 'failed') AS SIGNED) AS failed")
             .Append(", CAST(SUM(a.status = 'canceled') AS SIGNED) AS canceled")
             .Append(", CAST(SUM(a.status = 'running') AS SIGNED) AS running")
+            .Append(", CAST(SUM(a.status = 'skipped') AS SIGNED) AS skipped")
             .Append(", AVG(CASE WHEN a.completed_on IS NOT NULL AND a.started_on IS NOT NULL ")
             .Append("THEN TIMESTAMPDIFF(MICROSECOND, a.started_on, a.completed_on) / 1000 END) AS avg_duration_ms")
             .Append(", CAST(SUM(a.records_impacted) AS SIGNED) AS total_records_impacted")
@@ -191,6 +249,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
         var request = new DataExecutorRequest(sql.ToString())
         {
             RetriesEnabled = false,
+            CommandTimeoutInSeconds = CommandTimeoutSeconds,
             Parameters = new { since, until, application },
         };
 
@@ -205,6 +264,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
             Failed = r.Failed,
             Canceled = r.Canceled,
             Running = r.Running,
+            Skipped = r.Skipped,
             SuccessRate = SuccessRate(r.Succeeded, r.Failed, r.Canceled),
             AvgDurationMs = r.AvgDurationMs is null ? null : (long)Math.Round(r.AvgDurationMs.Value),
             P95DurationMs = null, // Percentiles are surfaced by activity_history (single workload).
@@ -255,6 +315,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
         var request = new DataExecutorRequest(sql.ToString())
         {
             RetriesEnabled = false,
+            CommandTimeoutInSeconds = CommandTimeoutSeconds,
             Parameters = new
             {
                 since = criteria.Since,
@@ -318,7 +379,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
         sql.Append(" ORDER BY a.created_on DESC, a.id DESC LIMIT @limit");
         parameters.Add("limit", criteria.Limit + 1);
 
-        var request = new DataExecutorRequest(sql.ToString()) { Parameters = parameters, RetriesEnabled = false };
+        var request = new DataExecutorRequest(sql.ToString()) { Parameters = parameters, RetriesEnabled = false, CommandTimeoutInSeconds = CommandTimeoutSeconds };
         var rows = (await MySqlExecutor.QueryAsync<ActivityRow>(
             request, factory, this.Logger, cancellationToken)).ToList();
 
@@ -378,7 +439,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
 
         sql.Append(" LIMIT 1");
 
-        var request = new DataExecutorRequest(sql.ToString()) { Parameters = parameters, RetriesEnabled = false };
+        var request = new DataExecutorRequest(sql.ToString()) { Parameters = parameters, RetriesEnabled = false, CommandTimeoutInSeconds = CommandTimeoutSeconds };
         var row = await MySqlExecutor.QuerySingleOrDefaultAsync<ActivityRow>(
             request, factory, this.Logger, cancellationToken);
 
@@ -432,6 +493,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
             "FROM log_entries AS l WHERE l.activity_id = @activityId" + window)
         {
             RetriesEnabled = false,
+            CommandTimeoutInSeconds = CommandTimeoutSeconds,
             Parameters = parameters,
         };
 
@@ -440,6 +502,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
             "WHERE l.activity_id = @activityId" + window + " GROUP BY l.log_level")
         {
             RetriesEnabled = false,
+            CommandTimeoutInSeconds = CommandTimeoutSeconds,
             Parameters = parameters,
         };
 
@@ -449,6 +512,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
             " GROUP BY l.category ORDER BY cnt DESC LIMIT @top")
         {
             RetriesEnabled = false,
+            CommandTimeoutInSeconds = CommandTimeoutSeconds,
             Parameters = new { activityId, lo, hi, top = topCategories },
         };
 
@@ -458,6 +522,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
             "GROUP BY l.exception_type ORDER BY cnt DESC LIMIT @top")
         {
             RetriesEnabled = false,
+            CommandTimeoutInSeconds = CommandTimeoutSeconds,
             Parameters = new { activityId, lo, hi, top = topCategories },
         };
 
@@ -531,7 +596,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
         AppendLogOrder(sql, criteria.Ascending);
         parameters.Add("limit", criteria.Limit + 1);
 
-        var request = new DataExecutorRequest(sql.ToString()) { Parameters = parameters, RetriesEnabled = false };
+        var request = new DataExecutorRequest(sql.ToString()) { Parameters = parameters, RetriesEnabled = false, CommandTimeoutInSeconds = CommandTimeoutSeconds };
         var rows = (await MySqlExecutor.QueryAsync<LogRow>(
             request, factory, this.Logger, cancellationToken)).ToList();
 
@@ -585,7 +650,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
         sql.Append(" ORDER BY l.event_time_utc DESC, l.id DESC LIMIT @limit");
         parameters.Add("limit", criteria.Limit + 1);
 
-        var request = new DataExecutorRequest(sql.ToString()) { Parameters = parameters, RetriesEnabled = false };
+        var request = new DataExecutorRequest(sql.ToString()) { Parameters = parameters, RetriesEnabled = false, CommandTimeoutInSeconds = CommandTimeoutSeconds };
         var rows = (await MySqlExecutor.QueryAsync<LogRow>(
             request, factory, this.Logger, cancellationToken)).ToList();
 
@@ -684,6 +749,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
         var request = new DataExecutorRequest(sql.ToString())
         {
             RetriesEnabled = false,
+            CommandTimeoutInSeconds = CommandTimeoutSeconds,
             Parameters = new
             {
                 since = criteria.Since,
@@ -733,7 +799,10 @@ public sealed class LoggingRepository : BaseClassWithLogging
         ArgumentException.ThrowIfNullOrWhiteSpace(wrappedSql);
 
         using var connection = await factory.CreateOpenConnectionAsync(cancellationToken);
-        var command = new CommandDefinition(wrappedSql, cancellationToken: cancellationToken);
+        var command = new CommandDefinition(
+            wrappedSql,
+            commandTimeout: CommandTimeoutSeconds,
+            cancellationToken: cancellationToken);
         var raw = (await connection.QueryAsync(command)).Cast<IDictionary<string, object>>().ToList();
 
         var truncated = raw.Count > maxRows;
@@ -779,6 +848,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
                 $"FROM activity_input AS ai WHERE ai.{column} IN @ids")
             {
                 RetriesEnabled = false,
+                CommandTimeoutInSeconds = CommandTimeoutSeconds,
                 Parameters = new { ids = frontier },
             };
 
@@ -844,7 +914,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
             parameters.Add("hi", hi);
         }
 
-        var request = new DataExecutorRequest(sql.ToString()) { Parameters = parameters, RetriesEnabled = false };
+        var request = new DataExecutorRequest(sql.ToString()) { Parameters = parameters, RetriesEnabled = false, CommandTimeoutInSeconds = CommandTimeoutSeconds };
         var rows = await MySqlExecutor.QueryAsync<ActivityRow>(request, factory, logger, cancellationToken);
 
         return rows
@@ -870,6 +940,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
             "GROUP BY l.log_level")
         {
             RetriesEnabled = false,
+            CommandTimeoutInSeconds = CommandTimeoutSeconds,
             Parameters = new { id = row.Id, lo, hi },
         };
 
@@ -896,7 +967,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
             parameters.Add("hi", hi);
         }
 
-        var request = new DataExecutorRequest(sql.ToString()) { Parameters = parameters, RetriesEnabled = false };
+        var request = new DataExecutorRequest(sql.ToString()) { Parameters = parameters, RetriesEnabled = false, CommandTimeoutInSeconds = CommandTimeoutSeconds };
         return await MySqlExecutor.ExecuteScalarAsync<long>(request, factory, logger, cancellationToken);
     }
 
@@ -912,6 +983,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
             "SELECT COUNT(*) FROM activity_input AS ai WHERE ai.input_activity_id = @id")
         {
             RetriesEnabled = false,
+            CommandTimeoutInSeconds = CommandTimeoutSeconds,
             Parameters = new { id },
         };
         return await MySqlExecutor.ExecuteScalarAsync<long>(request, factory, logger, cancellationToken);
@@ -1086,17 +1158,6 @@ public sealed class LoggingRepository : BaseClassWithLogging
         return (center.AddDays(-days), center.AddDays(days));
     }
 
-    private static double? SuccessRate(long succeeded, long failed, long canceled)
-    {
-        var completed = succeeded + failed + canceled;
-        if (completed <= 0)
-        {
-            return null;
-        }
-
-        return Math.Round((double)succeeded / completed, 4);
-    }
-
     private static LevelCounts ToLevelCounts(IEnumerable<LevelCountRow> rows)
     {
         var counts = new LevelCounts();
@@ -1115,32 +1176,6 @@ public sealed class LoggingRepository : BaseClassWithLogging
         }
 
         return counts;
-    }
-
-    private static HistoryStats ComputeStats(IReadOnlyCollection<ActivityRow> rows)
-    {
-        var durations = rows
-            .Select(r => TimeFormat.DurationMs(r.StartedOn, r.CompletedOn))
-            .Where(d => d is not null)
-            .Select(d => d!.Value)
-            .OrderBy(d => d)
-            .ToList();
-
-        var succeeded = rows.Count(r => string.Equals(r.Status, "succeeded", StringComparison.Ordinal));
-        var failed = rows.Count(r => string.Equals(r.Status, "failed", StringComparison.Ordinal));
-        var canceled = rows.Count(r => string.Equals(r.Status, "canceled", StringComparison.Ordinal));
-        var impacted = rows.Where(r => r.RecordsImpacted is not null).Select(r => r.RecordsImpacted!.Value).ToList();
-
-        return new HistoryStats
-        {
-            Count = rows.Count,
-            SuccessRate = SuccessRate(succeeded, failed, canceled),
-            MinDurationMs = durations.Count > 0 ? durations[0] : null,
-            AvgDurationMs = durations.Count > 0 ? (long)Math.Round(durations.Average()) : null,
-            P95DurationMs = Percentile(durations, 0.95),
-            MaxDurationMs = durations.Count > 0 ? durations[^1] : null,
-            AvgRecordsImpacted = impacted.Count > 0 ? (long)Math.Round(impacted.Average()) : null,
-        };
     }
 
     private static long? Percentile(IReadOnlyList<long> sorted, double p)

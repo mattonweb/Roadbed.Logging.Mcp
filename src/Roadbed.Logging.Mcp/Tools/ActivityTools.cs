@@ -198,7 +198,9 @@ public static class ActivityTools
     [McpServerTool(Name = "activity_history")]
     [Description("One recurring workload over time for regression hunting. Provide activity_key OR activity_type. "
         + "Filters on created_on; default window 90 days, capped to the ~12-month activity retention. Returns "
-        + "runs plus stats including min/avg/p95/max duration.")]
+        + "runs plus stats including min/avg/p95/max duration. stats.skipped counts skipped runs (terminal "
+        + "no-op status); skipped is EXCLUDED from success_rate on both sides, so an all-skipped window "
+        + "returns null instead of 0%.")]
     public static Task<string> ActivityHistory(
         LoggingRepository repository,
         ISourceRegistry registry,

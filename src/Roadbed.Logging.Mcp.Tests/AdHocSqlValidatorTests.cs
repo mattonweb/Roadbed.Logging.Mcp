@@ -6,7 +6,7 @@ using Roadbed.Logging.Mcp.Tools;
 [TestClass]
 public sealed class AdHocSqlValidatorTests
 {
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("SELECT 1")]
     [DataRow("select a.id from activity a where a.application = 'x'")]
     [DataRow("WITH t AS (SELECT id FROM activity) SELECT * FROM t")]
@@ -19,7 +19,7 @@ public sealed class AdHocSqlValidatorTests
         StringAssert.Contains(wrapped, "LIMIT 201");
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("DROP TABLE activity")]
     [DataRow("INSERT INTO activity (id) VALUES ('x')")]
     [DataRow("UPDATE activity SET status = 'x'")]

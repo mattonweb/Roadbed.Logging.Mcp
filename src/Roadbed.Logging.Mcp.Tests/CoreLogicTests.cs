@@ -1,9 +1,12 @@
 namespace Roadbed.Logging.Mcp.Tests;
 
 using System;
+using System.Text.Json;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Roadbed.Logging.Mcp.Configuration;
+using Roadbed.Logging.Mcp.Data;
 using Roadbed.Logging.Mcp.Lib;
+using Roadbed.Logging.Mcp.Models;
 
 [TestClass]
 public sealed class KeysetCursorTests
@@ -21,7 +24,7 @@ public sealed class KeysetCursorTests
         Assert.AreEqual("01ARZ3NDEKTSV4RRFFQ69G5FAV", decodedId);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("")]
     [DataRow("not-base64-!!")]
     [DataRow(null)]
@@ -34,7 +37,7 @@ public sealed class KeysetCursorTests
 [TestClass]
 public sealed class LogLevelsTests
 {
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("Trace", 0)]
     [DataRow("information", 2)]
     [DataRow("WARNING", 3)]
@@ -90,7 +93,7 @@ public sealed class UlidTimestampTests
         Assert.IsTrue(later > earlier);
     }
 
-    [DataTestMethod]
+    [TestMethod]
     [DataRow("too-short")]
     [DataRow("")]
     [DataRow(null)]
@@ -108,7 +111,7 @@ public sealed class McpConfigTests
     {
         var config = new McpConfig();
 
-        Assert.ThrowsException<InvalidOperationException>(() => config.Validate());
+        Assert.Throws<InvalidOperationException>(() => config.Validate());
     }
 
     [TestMethod]
@@ -118,7 +121,7 @@ public sealed class McpConfigTests
         config.Sources.Add(new SourceConfig { Name = "a", ConnectionString = "x", Default = true });
         config.Sources.Add(new SourceConfig { Name = "b", ConnectionString = "y", Default = true });
 
-        Assert.ThrowsException<InvalidOperationException>(() => config.Validate());
+        Assert.Throws<InvalidOperationException>(() => config.Validate());
     }
 
     [TestMethod]
@@ -144,5 +147,94 @@ public sealed class ConfigLoaderTests
             ".Roadbed.Logging.Mcp");
 
         Assert.AreEqual(expected, ConfigLoader.ResolvePath());
+    }
+}
+
+[TestClass]
+public sealed class SuccessRateTests
+{
+    [TestMethod]
+    public void ExcludesSkipped_RateOverFailureClassesOnly()
+    {
+        // 4 succeeded, 1 failed, 0 canceled → 4/5 = 0.8. Any number of 'skipped' on the
+        // side is irrelevant; the helper takes (s, f, c) and that's the rule's enforcement.
+        Assert.AreEqual(0.8, LoggingRepository.SuccessRate(succeeded: 4, failed: 1, canceled: 0));
+    }
+
+    [TestMethod]
+    public void NoCompleted_ReturnsNull()
+    {
+        // Stand-in for an "all-skipped" window: caller did not pass any s/f/c.
+        Assert.IsNull(LoggingRepository.SuccessRate(succeeded: 0, failed: 0, canceled: 0));
+    }
+
+    [TestMethod]
+    public void AllFailed_ReturnsZero()
+    {
+        Assert.AreEqual(0.0, LoggingRepository.SuccessRate(succeeded: 0, failed: 5, canceled: 0));
+    }
+}
+
+[TestClass]
+public sealed class ComputeStatsTests
+{
+    [TestMethod]
+    public void SkippedNotCountedInSuccessRate_ButSurfacedSeparately()
+    {
+        var rows = new[]
+        {
+            new ActivityRow { Status = "succeeded" },
+            new ActivityRow { Status = "succeeded" },
+            new ActivityRow { Status = "failed" },
+            new ActivityRow { Status = "skipped" },
+            new ActivityRow { Status = "skipped" },
+        };
+
+        var stats = LoggingRepository.ComputeStats(rows);
+
+        Assert.AreEqual(5, stats.Count);
+        Assert.AreEqual(2, stats.Skipped);
+        // 2 succeeded / (2 succeeded + 1 failed) = 0.6667; skipped neither helps nor hurts.
+        Assert.AreEqual(0.6667, stats.SuccessRate);
+    }
+
+    [TestMethod]
+    public void AllSkipped_SuccessRateNull()
+    {
+        var rows = new[]
+        {
+            new ActivityRow { Status = "skipped" },
+            new ActivityRow { Status = "skipped" },
+        };
+
+        var stats = LoggingRepository.ComputeStats(rows);
+
+        Assert.AreEqual(2, stats.Count);
+        Assert.AreEqual(2, stats.Skipped);
+        Assert.IsNull(stats.SuccessRate);
+    }
+}
+
+[TestClass]
+public sealed class SkippedJsonShapeTests
+{
+    [TestMethod]
+    public void FleetOverviewRow_SerializesSkippedKey()
+    {
+        var row = new FleetOverviewRow { Application = "x", Runs = 3, Skipped = 1 };
+
+        using var doc = JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(row));
+
+        Assert.AreEqual(1, doc.RootElement.GetProperty("skipped").GetInt64());
+    }
+
+    [TestMethod]
+    public void HistoryStats_SerializesSkippedKey()
+    {
+        var stats = new HistoryStats { Count = 4, Skipped = 2, SuccessRate = 1.0 };
+
+        using var doc = JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(stats));
+
+        Assert.AreEqual(2, doc.RootElement.GetProperty("skipped").GetInt64());
     }
 }

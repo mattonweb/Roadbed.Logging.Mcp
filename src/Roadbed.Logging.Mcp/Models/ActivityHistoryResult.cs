@@ -38,11 +38,18 @@ public sealed class HistoryStats
 {
     #region Public Properties
 
-    /// <summary>Gets or sets the run count.</summary>
+    /// <summary>Gets or sets the run count (every status, including skipped).</summary>
     [JsonPropertyName("count")]
     public long Count { get; set; }
 
-    /// <summary>Gets or sets the success rate as a fraction of completed runs (0-1).</summary>
+    /// <summary>Gets or sets the skipped count (terminal status meaning the run ran to completion
+    /// but intentionally did no work). Excluded from <see cref="SuccessRate"/> on both sides.</summary>
+    [JsonPropertyName("skipped")]
+    public long Skipped { get; set; }
+
+    /// <summary>Gets or sets the success rate as a fraction of <c>succeeded / (succeeded + failed + canceled)</c>.
+    /// Skipped runs are excluded from numerator and denominator, so a window of all-skipped runs returns
+    /// <see langword="null"/> rather than 0%.</summary>
     [JsonPropertyName("success_rate")]
     public double? SuccessRate { get; set; }
 

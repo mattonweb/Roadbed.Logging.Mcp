@@ -13,7 +13,7 @@ dependency on `Roadbed.Crud`** — its bulk-insert path is internal, custom, and
 stamps each row with its own originating `activity_id` rather than a uniform
 activity id like the CRUDALBT "B" tier.
 
-## Type catalog (17 types)
+## Type catalog
 
 | Group                       | Types                                                                                                  |
 | --------------------------- | ------------------------------------------------------------------------------------------------------ |
@@ -23,12 +23,16 @@ activity id like the CRUDALBT "B" tier.
 | Marker interface            | `ILoggingDatabaseFactory` (extends `IDataConnectionFactory`)                                            |
 | Service                     | `LoggingActivityService` (public sealed; dual ctor), `LoggingActivityScope` (IDisposable)               |
 | OTel pipeline               | `RoadbedDbLogRecordExporter`, `LogWriterHostedService`, `LoggingChannel`                                |
-| Wiring                      | `InstallLogging` (`IServiceCollectionInstaller`), `LoggingBuilderExtensions.AddRoadbedDbLogging`        |
+| Execution port              | `ILoggingDataExecutor` (internal; implemented by the provider satellites)                               |
+| Wiring (core)               | `LoggingModule.Register`, `LoggingBuilderExtensions.AddRoadbedDbLogging`                                |
+| Wiring (provider packages)  | `InstallLoggingMySql`, `InstallLoggingSqlite` (each an auto-discovered `IServiceCollectionInstaller`)   |
 
 ## MUST
 
-- **MUST** register a singleton `LoggingOptions` and a singleton `ILoggingDatabaseFactory` in DI **before** calling `services.InstallModulesInAppDomain(configuration)`. The installer resolves both up-front and throws if either is missing.
-- **MUST** call `builder.Logging.AddRoadbedDbLogging()` on the host's `ILoggingBuilder` to wire the OpenTelemetry MEL provider, the batch processor, and the database exporter. The `IServiceCollectionInstaller` does **not** see `ILoggingBuilder`, so this step lives outside `InstallLogging`.
+- **MUST** reference exactly **one** provider package — `Roadbed.Logging.MySql` **or** `Roadbed.Logging.Sqlite` — alongside the core `Roadbed.Logging`. The provider package carries the database client (MySqlConnector / Microsoft.Data.Sqlite); core itself has no client dependency.
+- **MUST** wire logging with the single typed call `builder.Logging.AddRoadbedDbLogging<TProviderInstaller>()`, naming the satellite installer — `InstallLoggingMySql` or `InstallLoggingSqlite`. This one call wires the OpenTelemetry exporter **and** the chosen provider (executor, repositories, channel, writer). Naming the type compile-pins the satellite assembly, so it loads deterministically: **do not** use a `typeof(...)` discard, a manual `Assembly.Load`, or rely on `InstallModulesInAppDomain` to auto-discover the satellite. The type argument is also how you choose between MySQL and SQLite, and how "exactly one provider" is enforced.
+- **MUST** register a singleton `LoggingOptions` and a singleton `ILoggingDatabaseFactory` in DI **before** the `AddRoadbedDbLogging<…>()` call. The provider installer resolves both eagerly and throws if either is missing.
+- For a non-logging Roadbed satellite (scheduling, etc.) vendored via `HintPath`, select it the same deterministic way: `services.InstallModule<TInstaller>(configuration)`. Reserve `InstallModulesInAppDomain` for installers in assemblies you know are already loaded (e.g. the entry assembly's own).
 - **MUST** generate the activity ULID in the consuming application — Roadbed.Logging does **not** generate identifiers. Pass the same ULID you used for `IAsyncBulkInsertOperation.BulkInsertAsync` calls during the run.
 - **MUST** set `LoggingOptions.Application` (and ideally `Environment`) so every row carries identifying provenance. The exporter stamps these onto every `LoggingLogEntry`.
 - **MUST** set `LoggingOptions.Schema` to the MySQL database name (e.g. `"ops"`, `"platform"`) in production. The default is the empty string for SQLite-dev friendliness.
@@ -42,7 +46,7 @@ activity id like the CRUDALBT "B" tier.
 ## MUST NOT
 
 - **MUST NOT** reference `Roadbed.Crud` from a project that already takes `Roadbed.Logging`. The library is deliberately a peer, not a consumer, of the CRUD pattern.
-- **MUST NOT** point `ILoggingDatabaseFactory` at any `DataConnectionStringType` other than `MySQL`, `SQLite`, or `SQLiteInMemory`. The installer throws on every other value.
+- **MUST NOT** point `ILoggingDatabaseFactory` at a `DataConnectionStringType` that disagrees with the referenced provider package (e.g. a Postgres connection string with `Roadbed.Logging.Sqlite`). The provider executor binds one client; a mismatch fails at first query, not at install time.
 - **MUST NOT** rely on `LoggingActivityScope` to auto-finalize the activity row. Skipped, Canceled, and Succeeded outcomes are all distinct terminal states; the dispose path has no way to choose between them.
 - **MUST NOT** invent your own batching or retry layer around `LoggingActivityService` or the log-entry path — the background writer already batches, falls back to `Console.Error` on database error, and flushes on `StopAsync`.
 - **MUST NOT** log from a category that overlaps `LoggingOptions.RecursionGuardCategories` and expect the entry to be persisted. Categories under `Roadbed.Logging`, `Roadbed.Data`, `Roadbed.Data.MySql`, `Roadbed.Data.Sqlite`, and `MySqlConnector` are dropped to prevent the database write path from logging through itself.
@@ -51,11 +55,11 @@ activity id like the CRUDALBT "B" tier.
 - **MUST NOT** add a standalone `UNIQUE` on `activity.id` or any other partitioned-table single column. MySQL requires every unique key on a partitioned InnoDB table to contain the partition column, so the only PK is the composite one. Uniqueness of `activity.id` is guaranteed by the caller's ULID, not by a DB constraint.
 - **MUST NOT** add foreign keys between the three tables (or from them to anything else). Partitioned InnoDB tables cannot have FKs. The lineage edges in `activity_input` are soft references on purpose.
 - **MUST NOT** rely on the `last_modified_on` server-side `ON UPDATE` trigger to be UTC. The framework's UPDATE statements pass an explicit `@LastModifiedOn = DateTime.UtcNow` parameter that overrides the trigger. Custom queries that update the row outside the framework should do the same — or set the connection's session `time_zone` to `+00:00`.
-- **MUST NOT** re-register `LoggingChannel` in DI. `InstallLogging` registers it as a process-wide shared instance built from `LoggingOptions`; the host writer (in the host container) and every producer-side OTel exporter (in any container — host, `ServiceLocator` snapshot, or test fixture) all need to resolve the **same** object. Overwriting that registration in `Program.cs` (e.g. via `services.AddSingleton<LoggingChannel>(new LoggingChannel(...))`) is what creates the "`activity` rows write but `log_entries` stays empty" symptom.
+- **MUST NOT** re-register `LoggingChannel` in DI. `LoggingModule.Register` (invoked by the provider installer that `AddRoadbedDbLogging<…>()` runs) registers it as a process-wide shared instance built from `LoggingOptions`; the host writer (in the host container) and every producer-side OTel exporter (in any container — host, `ServiceLocator` snapshot, or test fixture) all need to resolve the **same** object. Overwriting that registration in `Program.cs` (e.g. via `services.AddSingleton<LoggingChannel>(new LoggingChannel(...))`) is what creates the "`activity` rows write but `log_entries` stays empty" symptom.
 
 ## Consuming-application host wiring
 
-The canonical startup recipe — register `LoggingOptions` and `ILoggingDatabaseFactory` **before** anything else logging-related, call `AddRoadbedDbLogging()` on the logging builder, then run `InstallModulesInAppDomain`. The order shown below is the one the framework is tested against:
+The canonical startup recipe — register `LoggingOptions` and `ILoggingDatabaseFactory` **before** anything else logging-related, then make the **single** typed wiring call that selects the provider and wires the exporter. The order shown below is the one the framework is tested against:
 
 ```csharp
 // Program.cs (host)
@@ -64,6 +68,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Roadbed;
 using Roadbed.Logging;
+using Roadbed.Logging.MySql;   // the provider satellite you reference
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -79,18 +84,16 @@ builder.Services.AddSingleton(new LoggingOptions
 
 builder.Services.AddSingleton<ILoggingDatabaseFactory, FooLoggingDatabaseFactory>();
 
-// 2. Wire the OpenTelemetry MEL provider, batch processor, and DB exporter
-//    onto the host's logging builder. Safe to call before InstallModules*
-//    — the exporter resolves LoggingChannel lazily on first export, not at
-//    OTel-provider realization, so installer-discovery order is not load-
-//    bearing.
-builder.Logging.AddRoadbedDbLogging();
+// 2. ONE call: wire the OpenTelemetry exporter AND select the provider by
+//    naming its satellite installer as the type argument. Naming the type
+//    compile-pins the satellite assembly, so it loads and wires with no
+//    auto-discovery, no `typeof(...)` discard, and no manual Assembly.Load.
+//    Swap to <InstallLoggingSqlite> for the SQLite backend.
+builder.Logging.AddRoadbedDbLogging<InstallLoggingMySql>();
 
-// 3. Discover and run every IServiceCollectionInstaller, including
-//    InstallExtensionsLogging (Roadbed.Common) and InstallLogging
-//    (Roadbed.Logging). InstallLogging eagerly constructs the shared
-//    LoggingChannel instance and registers it as a singleton.
-builder.Services.InstallModulesInAppDomain(builder.Configuration);
+// 3. (Only if the host has OTHER Roadbed installers.) Logging no longer needs
+//    this call — step 2 wired it completely.
+// builder.Services.InstallModulesInAppDomain(builder.Configuration);
 
 using var host = builder.Build();
 await host.RunAsync();
@@ -106,7 +109,9 @@ Set `ILoggingDatabaseFactory.Connecion.ConnectionStringType` to one of:
 | `DataConnectionStringType.SQLite`                           | Local/dev only. No partitioning; retention is a scheduled `DELETE` job.                          |
 | `DataConnectionStringType.SQLiteInMemory`                   | Test harness only. Same as SQLite but the database vanishes when the connection closes.          |
 
-`Postgres`, `Unknown`, and any other value cause `InstallLogging` to throw `InvalidOperationException` at install time.
+The chosen value must match the referenced provider package: `Roadbed.Logging.MySql` for `MySQL`, `Roadbed.Logging.Sqlite` for `SQLite` / `SQLiteInMemory`. There is no Postgres provider package; a `Postgres`/`Unknown` connection has no executor and fails at first query.
+
+> **Package layout (since the provider split).** `Roadbed.Logging` is provider-neutral — it depends only on `Roadbed.Data` (+ `.Dapper`) and carries no database client. Each provider satellite (`Roadbed.Logging.MySql`, `Roadbed.Logging.Sqlite`) references core plus the matching `Roadbed.Data.*` client and supplies an `ILoggingDataExecutor` adapter behind an auto-discovered installer. A MySQL-only host therefore never pulls in the SQLite native binaries, and vice-versa. The repositories, activity service, channel, exporter, and DDL assets all live in core; only the executor adapter and installer live in the satellites.
 
 ### Database setup (MySQL example)
 
@@ -284,12 +289,13 @@ public sealed class FooIngestionJob : BaseSchedulingJob<FooIngestionJob>
 
 Any `ILogger` call emitted **while a `LoggingActivityScope` is alive on the
 current async flow** is automatically stamped with that scope's
-`activity_id` — you do **not** pass the id to the logger. `BeginAsync`
-establishes the correlation in two ambient channels, and
-`RoadbedDbLogRecordExporter` reads them per log record:
-
-- the **MEL logging scope** state key `activity_id` (primary), and
-- `Activity.Current`'s `roadbed.activity_id` tag (fallback).
+`activity_id` — you do **not** pass the id to the logger. `BeginAsync` starts
+a diagnostic `Activity` and tags it with `roadbed.activity_id`; that same
+`Activity` feeds the `trace_id` / `span_id` columns, so `activity_id` has
+**identical coverage** to them — every row that has a trace id also has its
+activity id. `RoadbedDbLogRecordExporter` reads the value from the ambient
+`Activity` (with the MEL logging scope key `activity_id` as a secondary
+source for code paths that open their own scope, e.g. the bulk-insert path).
 
 The ambient state is pushed in the **caller's** execution context, so it
 flows to the `await BeginAsync(...)` caller and to any code it awaits while
@@ -299,12 +305,15 @@ optional and independent — that only lands the value in the row's
 scope is disposed, `Activity.Current` reverts and later log lines are no
 longer stamped.
 
-> Requires the Roadbed.Logging build where `BeginAsync` pushes the ambient
-> in the caller's frame. In earlier builds `BeginAsync` was `async` and the
-> scope/`Activity` were established inside its state machine, so .NET's
-> `ExecutionContext` restore discarded them before control returned to the
-> caller — leaving `activity_id` NULL even though `properties.ActivityId`
-> was set. If you see that symptom, re-vendor `Roadbed.Logging.dll`.
+> Requires a Roadbed.Logging build with **both** fixes: `BeginAsync` pushes
+> the ambient in the caller's frame (earlier `async` builds had .NET's
+> `ExecutionContext` restore discard it, leaving every caller log NULL), and
+> the OTel pipeline exports through the **synchronous** processor (earlier
+> builds used a batch processor that read `Activity.Current` on a background
+> drain thread, so `activity_id` landed only on rows whose code path opened
+> its own scope — the orchestrator's own log lines stayed NULL even though
+> `trace_id` / `span_id` and `properties.ActivityId` were present). If you
+> see that split-coverage symptom, re-vendor `Roadbed.Logging.dll`.
 
 ### Heartbeating from a long-running step
 
@@ -343,6 +352,43 @@ await this._activities.UpdateAsync(
 await this._activities.AddInputAsync(silverActivityId, bronzePlacesActivityId, inputRole: "places", cancellationToken);
 await this._activities.AddInputAsync(silverActivityId, bronzeCousubsActivityId, inputRole: "cousubs", cancellationToken);
 ```
+
+### Reaping crash-orphaned activities
+
+`CompleteAsync` / `FailAsync` finalize a run on normal completion and on
+in-process exceptions. They cannot run when the process is **force-killed,
+crashes hard, or loses power** — so the row is stranded in `status='running'`
+forever and skews fleet success-rate. A process cannot finalize its own sudden
+death; a *later, living* process detects the orphan by heartbeat staleness and
+transitions it on the dead instance's behalf.
+
+```csharp
+// Startup sweep (or a low-frequency scheduled job). The service is already
+// scoped to this app's LoggingOptions.Application (+ Environment when set);
+// it can NEVER read or modify another application's activities.
+IReadOnlyList<string> reaped = await activities.ReapStaleActivitiesAsync(
+    staleAfter: TimeSpan.FromMinutes(30),
+    reason: "startup-sweep",
+    cancellationToken);
+
+if (reaped.Count > 0)
+{
+    logger.LogWarning("Reaped {Count} stale activities: {Ids}", reaped.Count, string.Join(", ", reaped));
+}
+```
+
+- **Staleness** = `COALESCE(last_heartbeat_on, started_on, created_on) <
+  (UtcNow - staleAfter)`. The `created_on` fallback protects a just-begun run
+  that has not emitted its first heartbeat from being reaped instantly.
+- Reaped rows become **`Canceled`** (never Succeeded/Failed) and carry
+  `{"reaped":true,"reason":...,"stale_after_seconds":N}` in `metrics`, so they
+  are distinguishable from app-initiated cancellations. `error`/`error_type`
+  are left untouched.
+- Choose `staleAfter` comfortably above your heartbeat interval (e.g. ≥ 6×) so
+  a momentarily-paused-but-alive run is never reaped.
+- The library does **not** schedule this — you decide when to call it. There is
+  no cross-application "admin" reaper by design.
+- Use `FindStaleActivitiesAsync(staleAfter, ct)` for a read-only dry run.
 
 ## Common pitfalls
 
@@ -399,6 +445,8 @@ await activities.CompleteAsync(id, LoggingActivityStatus.Failed);  // throws Arg
 | Finish on exception                                        | `await service.FailAsync(activityId, exception, ct)`                                               |
 | Mark canceled / skipped                                    | `await service.CompleteAsync(activityId, LoggingActivityStatus.Canceled, ct)`                      |
 | Record a lineage edge                                      | `await service.AddInputAsync(consumerId, inputId, inputRole, ct)`                                  |
+| Reap this app's crash-orphaned runs                        | `await service.ReapStaleActivitiesAsync(TimeSpan.FromMinutes(30), reason, ct)`                     |
+| Dry-run the reaper (read-only)                             | `await service.FindStaleActivitiesAsync(TimeSpan.FromMinutes(30), ct)`                             |
 | Wire MEL → OTel → DB                                       | `builder.Logging.AddRoadbedDbLogging()`                                                            |
 | Override drop policy                                       | `new LoggingOptions { ChannelFullPolicy = LoggingChannelFullPolicy.BlockBriefly }`                  |
 

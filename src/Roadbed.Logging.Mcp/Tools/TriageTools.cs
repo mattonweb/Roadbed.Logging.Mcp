@@ -31,9 +31,12 @@ public static class TriageTools
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>Compact JSON rollup rows.</returns>
     [McpServerTool(Name = "fleet_overview")]
-    [Description("Per-application health rollup (runs, succeeded/failed/canceled/running, success_rate, "
+    [Description("Per-application health rollup (runs, succeeded/failed/canceled/running/skipped, success_rate, "
         + "avg_duration_ms, total_records_impacted, last_run/last_failure). Filters on created_on; default "
-        + "window 7 days. p95 is null here - use activity_history for percentiles on a single workload.")]
+        + "window 7 days. 'skipped' is a terminal SUCCESS-class status meaning the run completed but "
+        + "intentionally did no work (e.g. precondition unmet); it is EXCLUDED from success_rate on both "
+        + "sides, so an all-skipped window returns null instead of 0%. p95 is null here - use "
+        + "activity_history for percentiles on a single workload.")]
     public static Task<string> FleetOverview(
         LoggingRepository repository,
         ISourceRegistry registry,
@@ -77,7 +80,8 @@ public static class TriageTools
     /// <returns>Compact JSON activity summaries with truncated error text.</returns>
     [McpServerTool(Name = "activities_recent_failures")]
     [Description("Newest failed/canceled runs across the fleet, with truncated error/error_type. Filters on "
-        + "created_on; default window 7 days. Default limit 25.")]
+        + "created_on; default window 7 days. Default limit 25. 'skipped' runs are not failures and are "
+        + "excluded.")]
     public static Task<string> ActivitiesRecentFailures(
         LoggingRepository repository,
         ISourceRegistry registry,

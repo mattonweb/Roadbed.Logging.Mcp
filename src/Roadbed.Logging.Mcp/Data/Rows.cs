@@ -119,6 +119,8 @@ internal sealed class FleetRow
 
     public long Running { get; set; }
 
+    public long Skipped { get; set; }
+
     public double? AvgDurationMs { get; set; }
 
     public long? TotalRecordsImpacted { get; set; }

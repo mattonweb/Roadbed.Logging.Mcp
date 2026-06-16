@@ -4,13 +4,15 @@ Resilient HTTP client wrapper. Provides retry-with-backoff, optional GZip/Deflat
 
 Used inside SDK class libraries that call REST APIs.
 
-## Type catalog (9 types)
+## Type catalog (11 types)
 
 | Type                        | Kind         | Purpose                                                                              |
 | --------------------------- | ------------ | ------------------------------------------------------------------------------------ |
 | `INetHttpClient`            | Interface    | The contract for making HTTP requests. Inject this in repositories.                  |
 | `NetHttpClient`             | Class        | Concrete implementation. Auto-registered by the installer.                           |
 | `NetHttpRequest`            | Class        | Request configuration: endpoint, method, headers, auth, retry, timeout.              |
+| `NetHttpDownloadRequest`    | Class        | Subclass of `NetHttpRequest` for streaming a body to a file (adds `DestinationPath`, `Overwrite`, `BufferSizeBytes`, `ComputeContentHash`; default 300s timeout). |
+| `NetHttpDownloadResult`     | Class        | Download outcome: `FilePath`, `BytesWritten`, `ContentType`, `ContentSha256`.        |
 | `NetHttpHeader`             | Record       | One HTTP header (`Name`, `Value`).                                                   |
 | `NetHttpAuthentication`     | Class        | `AuthenticationType` (Basic / Bearer / Unknown) + credential `Value`.                |
 | `NetHttpAuthenticationType` | Enum         | `Unknown`, `Basic`, `Bearer`.                                                        |
@@ -27,6 +29,7 @@ Used inside SDK class libraries that call REST APIs.
 - **MUST** use the correct generic type parameter: `MakeHttpRequestAsync<TDto>()` for automatic Newtonsoft deserialization, or `MakeHttpRequestAsync<string>()` to receive the raw response body.
 - **MUST** use `[JsonProperty(...)]` (Newtonsoft) on response DTOs. `[JsonPropertyName]` (System.Text.Json) is silently ignored.
 - **MUST** put `CancellationToken cancellationToken = default` as the last parameter on every async repository method that wraps an HTTP call.
+- **MUST** use `DownloadFileAsync(NetHttpDownloadRequest)` — not `MakeHttpRequestAsync<string>` — for binary/large file downloads. It streams the body straight to `DestinationPath` (never buffering it in memory), retries the whole attempt on a mid-body drop, and writes atomically via a `.part` file. The consumer owns the destination file's lifecycle.
 
 ## MUST NOT
 
@@ -207,6 +210,33 @@ if (response.IsSuccessStatusCode)
     // ... parse XML or whatever ...
 }
 ```
+
+### Stream a large file to disk (downloads)
+
+```csharp
+var request = new NetHttpDownloadRequest
+{
+    HttpEndPoint = new Uri("https://files.example.gov/big.xlsx"),
+    DestinationPath = Path.Combine(scratchDir, "big.xlsx"),
+    // Overwrite = true, ComputeContentHash = true, TimeoutInSecondsPerAttempt = 300 by default.
+    RetryPattern = new NetHttpRetryPattern { MaxAttempts = 3, DelayMultiplierInSeconds = 5 },
+};
+
+NetHttpResponse<NetHttpDownloadResult> response =
+    await this._httpClient.DownloadFileAsync(request, cancellationToken);
+
+if (response.IsSuccessStatusCode)
+{
+    string sha256 = response.Data.ContentSha256!;   // provenance anchor; record before deleting
+    long bytes = response.Data.BytesWritten;
+    // ... hand response.Data.FilePath to Roadbed.IO.Xlsx for streaming, then delete it ...
+}
+```
+
+The body is never held in memory; a mid-transfer drop retries the whole attempt;
+on failure no partial file is left at `DestinationPath`. Pair with
+[`reference-roadbed-io-xlsx.md`](reference-roadbed-io-xlsx.md) for the
+download → stream → bulk-insert recipe.
 
 ## Common pitfalls
 
