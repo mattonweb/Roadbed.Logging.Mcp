@@ -89,6 +89,15 @@ public sealed class SourceRegistry : BaseClassWithLogging, ISourceRegistry
             var builder = new MySqlConnectionStringBuilder(rawConnectionString)
             {
                 AllowLoadLocalInfile = false,
+
+                // Read every id column as a raw string instead of letting the connector coerce it
+                // to a Guid. The id and activity_id columns are fixed-width 36-char text holding
+                // UUIDv7 values. None keeps the reader independent of connector guid-coercion: any
+                // value reads as text rather than failing at the connector before the row reaches
+                // Dapper, so a non-canonical id never crashes a triage query. IdColumn then
+                // canonicalizes, and still handles a real Guid from a source backed by a native
+                // uuid type.
+                GuidFormat = MySqlGuidFormat.None,
             };
 
             if (builder.DefaultCommandTimeout == 0)

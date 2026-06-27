@@ -15,13 +15,13 @@ public sealed class KeysetCursorTests
     public void RoundTrips_TimestampAndId()
     {
         var ts = new DateTime(2026, 3, 15, 8, 30, 0, DateTimeKind.Utc);
-        var token = KeysetCursor.Encode(ts, "01ARZ3NDEKTSV4RRFFQ69G5FAV");
+        var token = KeysetCursor.Encode(ts, "019f067a-d176-77d4-8b82-641bee246b19");
 
         var ok = KeysetCursor.TryDecode(token, out var decodedTs, out var decodedId);
 
         Assert.IsTrue(ok);
         Assert.AreEqual(ts, decodedTs);
-        Assert.AreEqual("01ARZ3NDEKTSV4RRFFQ69G5FAV", decodedId);
+        Assert.AreEqual("019f067a-d176-77d4-8b82-641bee246b19", decodedId);
     }
 
     [TestMethod]
@@ -63,30 +63,23 @@ public sealed class LogLevelsTests
 }
 
 [TestClass]
-public sealed class UlidTimestampTests
+public sealed class Uuid7TimestampTests
 {
     [TestMethod]
-    public void Decodes_MinUlidToEpoch()
+    public void Decodes_EmbeddedTimestampToMillisecond()
     {
-        // All-zero timestamp prefix decodes to the Unix epoch.
-        var actual = UlidTimestamp.TryGetTimestampUtc("00000000000000000000000000");
+        // 019f067a-d176-... carries 0x019f067ad176 ms in its first 48 bits =
+        // 2026-06-27T00:29:00.150Z, matching the row's created_on to the millisecond.
+        var actual = Uuid7Timestamp.TryGetTimestampUtc("019f067a-d176-77d4-8b82-641bee246b19");
 
-        Assert.AreEqual(DateTimeOffset.FromUnixTimeMilliseconds(0).UtcDateTime, actual);
-    }
-
-    [TestMethod]
-    public void Decodes_MaxUlid_OutOfRange_ReturnsNull()
-    {
-        // "7ZZZZZZZZZ" is the maximum 48-bit ms timestamp (year ~10889), beyond
-        // DateTime's range, so the decoder returns null rather than throwing.
-        Assert.IsNull(UlidTimestamp.TryGetTimestampUtc("7ZZZZZZZZZZZZZZZZZZZZZZZZZZ"));
+        Assert.AreEqual(DateTimeOffset.FromUnixTimeMilliseconds(1782520140150).UtcDateTime, actual);
     }
 
     [TestMethod]
     public void Decodes_OrdersByTimestamp()
     {
-        var earlier = UlidTimestamp.TryGetTimestampUtc("01ARZ3NDEKTSV4RRFFQ69G5FAV");
-        var later = UlidTimestamp.TryGetTimestampUtc("01ARZ3NDEMTSV4RRFFQ69G5FAV");
+        var earlier = Uuid7Timestamp.TryGetTimestampUtc("019f0677-27f4-76ee-84f6-663938a80398");
+        var later = Uuid7Timestamp.TryGetTimestampUtc("019f067a-d176-77d4-8b82-641bee246b19");
 
         Assert.IsNotNull(earlier);
         Assert.IsNotNull(later);
@@ -94,12 +87,21 @@ public sealed class UlidTimestampTests
     }
 
     [TestMethod]
-    [DataRow("too-short")]
+    public void Returns_NullForNonVersion7()
+    {
+        // A v4 (random) UUID has no embedded timestamp, so the version nibble guard rejects it.
+        Assert.IsNull(Uuid7Timestamp.TryGetTimestampUtc("00000000-0000-4000-8000-000000000000"));
+        Assert.IsNull(Uuid7Timestamp.TryGetTimestampUtc(Guid.NewGuid().ToString()));
+    }
+
+    [TestMethod]
+    [DataRow("not-a-guid")]
+    [DataRow("01KVPJQBWF37G6Y1F1CA5AW8PZ")] // a legacy ULID no longer parses as a UUID
     [DataRow("")]
     [DataRow(null)]
     public void Returns_NullForInvalid(string? value)
     {
-        Assert.IsNull(UlidTimestamp.TryGetTimestampUtc(value));
+        Assert.IsNull(Uuid7Timestamp.TryGetTimestampUtc(value));
     }
 }
 
@@ -236,5 +238,46 @@ public sealed class SkippedJsonShapeTests
         using var doc = JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(stats));
 
         Assert.AreEqual(2, doc.RootElement.GetProperty("skipped").GetInt64());
+    }
+}
+
+[TestClass]
+public sealed class IdColumnTests
+{
+    [TestMethod]
+    public void Guid_RendersCanonicalLowercase()
+    {
+        // A UUIDv7 id arrives from MySqlConnector as a Guid; emit the canonical
+        // lowercase 8-4-4-4-12 form regardless of the source casing.
+        var guid = Guid.Parse("019F067A-D176-77D4-8B82-641BEE246B19");
+
+        Assert.AreEqual("019f067a-d176-77d4-8b82-641bee246b19", IdColumn.ToCanonicalString(guid));
+    }
+
+    [TestMethod]
+    public void UlidString_PassesThrough()
+    {
+        // A pre-2026-06-23 ULID row still reads: the string is preserved verbatim
+        // (Crockford base32 is not a uuid and must not be reformatted).
+        const string ulid = "01KVPJQBWF37G6Y1F1CA5AW8PZ";
+
+        Assert.AreEqual(ulid, IdColumn.ToCanonicalString(ulid));
+    }
+
+    [TestMethod]
+    public void NullDbNullAndEmpty_ReturnNull()
+    {
+        Assert.IsNull(IdColumn.ToCanonicalString(null));
+        Assert.IsNull(IdColumn.ToCanonicalString(DBNull.Value));
+        Assert.IsNull(IdColumn.ToCanonicalString(string.Empty));
+    }
+
+    [TestMethod]
+    public void OrEmpty_CoalescesNullToEmpty()
+    {
+        Assert.AreEqual(string.Empty, IdColumn.ToCanonicalStringOrEmpty(null));
+        Assert.AreEqual(
+            "019f067a-d176-77d4-8b82-641bee246b19",
+            IdColumn.ToCanonicalStringOrEmpty(Guid.Parse("019f067a-d176-77d4-8b82-641bee246b19")));
     }
 }

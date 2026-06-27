@@ -37,7 +37,7 @@ public sealed class LineageEdge
     [JsonPropertyName("role")]
     public string? Role { get; set; }
 
-    /// <summary>Gets or sets the related activity ULID.</summary>
+    /// <summary>Gets or sets the related activity id (UUIDv7).</summary>
     [JsonPropertyName("activity_id")]
     public string ActivityId { get; set; } = string.Empty;
 

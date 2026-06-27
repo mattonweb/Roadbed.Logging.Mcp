@@ -97,7 +97,7 @@ public static class ActivityTools
     /// <param name="repository">The injected repository.</param>
     /// <param name="registry">The injected source registry.</param>
     /// <param name="config">The injected configuration.</param>
-    /// <param name="id">The activity ULID.</param>
+    /// <param name="id">The activity id.</param>
     /// <param name="createdOn">Optional created_on prune hint.</param>
     /// <param name="full">Return untruncated error text when true.</param>
     /// <param name="source">Optional source name.</param>
@@ -106,12 +106,12 @@ public static class ActivityTools
     [McpServerTool(Name = "activity_get")]
     [Description("One full run: parsed parameters/metrics, full or truncated error, log_level_counts, and "
         + "input/output lineage counts. Pass created_on (from a prior list) to prune to one partition; "
-        + "otherwise the ULID timestamp is used to derive the prune window.")]
+        + "otherwise the id's embedded UUIDv7 timestamp is used to derive the prune window.")]
     public static Task<string> ActivityGet(
         LoggingRepository repository,
         ISourceRegistry registry,
         McpConfig config,
-        [Description("The activity ULID (required).")]
+        [Description("The activity id, a UUIDv7 (required).")]
         string id,
         [Description("Optional created_on prune hint, ISO-8601 UTC (from a preceding list call).")]
         string? createdOn = null,
@@ -138,7 +138,7 @@ public static class ActivityTools
     /// </summary>
     /// <param name="repository">The injected repository.</param>
     /// <param name="registry">The injected source registry.</param>
-    /// <param name="id">The activity ULID.</param>
+    /// <param name="id">The activity id.</param>
     /// <param name="direction">Edge direction.</param>
     /// <param name="depth">Traversal depth.</param>
     /// <param name="createdOn">Optional prune hint.</param>
@@ -147,11 +147,11 @@ public static class ActivityTools
     /// <returns>Compact JSON lineage result.</returns>
     [McpServerTool(Name = "activity_lineage")]
     [Description("Provenance edges resolved to summaries. direction = inputs | outputs | both (default both); "
-        + "depth 1-3 (default 1). Related activities are resolved with ULID-derived partition pruning.")]
+        + "depth 1-3 (default 1). Related activities are resolved with UUIDv7-timestamp partition pruning.")]
     public static Task<string> ActivityLineage(
         LoggingRepository repository,
         ISourceRegistry registry,
-        [Description("The activity ULID (required).")]
+        [Description("The activity id, a UUIDv7 (required).")]
         string id,
         [Description("Direction: inputs, outputs, or both (default).")]
         string? direction = null,

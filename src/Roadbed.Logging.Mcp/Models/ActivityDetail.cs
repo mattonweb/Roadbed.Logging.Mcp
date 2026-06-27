@@ -12,11 +12,11 @@ public sealed class ActivityDetail : ActivitySummary
 {
     #region Public Properties
 
-    /// <summary>Gets or sets the parent activity ULID.</summary>
+    /// <summary>Gets or sets the parent activity id (UUIDv7).</summary>
     [JsonPropertyName("parent_activity_id")]
     public string? ParentActivityId { get; set; }
 
-    /// <summary>Gets or sets the root activity ULID.</summary>
+    /// <summary>Gets or sets the root activity id (UUIDv7).</summary>
     [JsonPropertyName("root_activity_id")]
     public string? RootActivityId { get; set; }
 

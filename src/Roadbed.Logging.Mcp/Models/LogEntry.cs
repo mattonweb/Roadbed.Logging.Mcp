@@ -63,7 +63,7 @@ public sealed class LogEntry
     [JsonPropertyName("exception_truncated")]
     public bool? ExceptionTruncated { get; set; }
 
-    /// <summary>Gets or sets the owning activity ULID (pivot to <c>activity_get</c>).</summary>
+    /// <summary>Gets or sets the owning activity id (UUIDv7; pivot to <c>activity_get</c>).</summary>
     [JsonPropertyName("activity_id")]
     public string? ActivityId { get; set; }
 

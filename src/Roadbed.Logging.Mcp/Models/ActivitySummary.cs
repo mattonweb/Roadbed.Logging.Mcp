@@ -10,7 +10,7 @@ public class ActivitySummary
 {
     #region Public Properties
 
-    /// <summary>Gets or sets the activity ULID.</summary>
+    /// <summary>Gets or sets the activity id (UUIDv7).</summary>
     [JsonPropertyName("id")]
     public string Id { get; set; } = string.Empty;
 

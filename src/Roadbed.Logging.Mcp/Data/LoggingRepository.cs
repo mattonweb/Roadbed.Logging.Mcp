@@ -392,7 +392,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
         if (hasMore)
         {
             var last = rows[criteria.Limit - 1];
-            nextCursor = KeysetCursor.Encode(last.CreatedOn, last.Id);
+            nextCursor = KeysetCursor.Encode(last.CreatedOn, IdColumn.ToCanonicalStringOrEmpty(last.Id));
         }
 
         return new PagedResult<ActivitySummary> { Items = page, NextCursor = nextCursor, Source = source };
@@ -401,11 +401,11 @@ public sealed class LoggingRepository : BaseClassWithLogging
     /// <summary>
     /// Returns one full run record, with parsed JSON, log-level counts, and
     /// lineage counts. Uses a <c>created_on</c> prune window derived from the
-    /// optional hint or the ULID timestamp.
+    /// optional hint or the id's embedded UUIDv7 timestamp.
     /// </summary>
     /// <param name="factory">The resolved source connection factory.</param>
     /// <param name="source">The resolved source name.</param>
-    /// <param name="id">The activity ULID.</param>
+    /// <param name="id">The activity id.</param>
     /// <param name="createdOnHint">Optional <c>created_on</c> prune hint.</param>
     /// <param name="truncateChars">Truncation threshold for the error text.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
@@ -421,7 +421,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
         ArgumentNullException.ThrowIfNull(factory);
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
 
-        var center = createdOnHint ?? UlidTimestamp.TryGetTimestampUtc(id);
+        var center = createdOnHint ?? Uuid7Timestamp.TryGetTimestampUtc(id);
         var parameters = new DynamicParameters();
         parameters.Add("id", id);
 
@@ -464,7 +464,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
     /// </summary>
     /// <param name="factory">The resolved source connection factory.</param>
     /// <param name="source">The resolved source name.</param>
-    /// <param name="activityId">The owning activity ULID.</param>
+    /// <param name="activityId">The owning activity id.</param>
     /// <param name="createdOnHint">Optional timestamp hint for the log window.</param>
     /// <param name="topCategories">Max categories / exception types to return.</param>
     /// <param name="truncateChars">Truncation threshold for sample messages.</param>
@@ -482,7 +482,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
         ArgumentNullException.ThrowIfNull(factory);
         ArgumentException.ThrowIfNullOrWhiteSpace(activityId);
 
-        var center = createdOnHint ?? UlidTimestamp.TryGetTimestampUtc(activityId);
+        var center = createdOnHint ?? Uuid7Timestamp.TryGetTimestampUtc(activityId);
         var (lo, hi) = center is not null ? Bracket(center.Value, days: 2) : (DateTime.MinValue, DateTime.MaxValue);
         var bound = center is not null;
         var window = bound ? " AND l.event_time_utc >= @lo AND l.event_time_utc < @hi" : string.Empty;
@@ -666,7 +666,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
     /// </summary>
     /// <param name="factory">The resolved source connection factory.</param>
     /// <param name="source">The resolved source name.</param>
-    /// <param name="id">The activity ULID.</param>
+    /// <param name="id">The activity id.</param>
     /// <param name="direction">One of <c>inputs</c>, <c>outputs</c>, or <c>both</c>.</param>
     /// <param name="depth">Traversal depth (1-3).</param>
     /// <param name="createdOnHint">Optional prune hint for the starting node.</param>
@@ -860,7 +860,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
             }
 
             var relatedIds = links
-                .Select(l => forward ? l.InputActivityId : l.ActivityId)
+                .Select(l => IdColumn.ToCanonicalStringOrEmpty(forward ? l.InputActivityId : l.ActivityId))
                 .Where(rid => seen.Add(rid))
                 .Distinct(StringComparer.Ordinal)
                 .ToList();
@@ -869,7 +869,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
 
             foreach (var link in links)
             {
-                var relatedId = forward ? link.InputActivityId : link.ActivityId;
+                var relatedId = IdColumn.ToCanonicalStringOrEmpty(forward ? link.InputActivityId : link.ActivityId);
                 if (!summaries.TryGetValue(relatedId, out var summary))
                 {
                     continue;
@@ -903,8 +903,8 @@ public sealed class LoggingRepository : BaseClassWithLogging
             .Append("SELECT ").Append(ActivitySummaryColumns)
             .Append(" FROM activity AS a WHERE a.id IN @ids");
 
-        // Bound created_on by the ULID-derived window across the batch to prune partitions.
-        var stamps = ids.Select(UlidTimestamp.TryGetTimestampUtc).Where(t => t is not null).Select(t => t!.Value).ToList();
+        // Bound created_on by the UUIDv7-timestamp-derived window across the batch to prune partitions.
+        var stamps = ids.Select(Uuid7Timestamp.TryGetTimestampUtc).Where(t => t is not null).Select(t => t!.Value).ToList();
         if (stamps.Count == ids.Count)
         {
             var lo = Bracket(stamps.Min(), days: 2).Lo;
@@ -941,7 +941,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
         {
             RetriesEnabled = false,
             CommandTimeoutInSeconds = CommandTimeoutSeconds,
-            Parameters = new { id = row.Id, lo, hi },
+            Parameters = new { id = IdColumn.ToCanonicalStringOrEmpty(row.Id), lo, hi },
         };
 
         var levels = await MySqlExecutor.QueryAsync<LevelCountRow>(
@@ -1002,7 +1002,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
 
         return new ActivitySummary
         {
-            Id = r.Id,
+            Id = IdColumn.ToCanonicalStringOrEmpty(r.Id),
             CreatedOnUtc = TimeFormat.ToIso8601Utc(r.CreatedOn) ?? string.Empty,
             Application = r.Application,
             Environment = r.Environment,
@@ -1036,7 +1036,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
 
         return new ActivityDetail
         {
-            Id = r.Id,
+            Id = IdColumn.ToCanonicalStringOrEmpty(r.Id),
             CreatedOnUtc = TimeFormat.ToIso8601Utc(r.CreatedOn) ?? string.Empty,
             Application = r.Application,
             Environment = r.Environment,
@@ -1054,8 +1054,8 @@ public sealed class LoggingRepository : BaseClassWithLogging
             ErrorType = r.ErrorType,
             Host = r.Host,
             Source = source,
-            ParentActivityId = r.ParentActivityId,
-            RootActivityId = r.RootActivityId,
+            ParentActivityId = IdColumn.ToCanonicalString(r.ParentActivityId),
+            RootActivityId = IdColumn.ToCanonicalString(r.RootActivityId),
             TraceId = r.TraceId,
             SpanId = r.SpanId,
             LastHeartbeatOnUtc = TimeFormat.ToIso8601Utc(r.LastHeartbeatOn),
@@ -1095,7 +1095,7 @@ public sealed class LoggingRepository : BaseClassWithLogging
             ExceptionType = r.ExceptionType,
             Exception = exception,
             ExceptionTruncated = exception is not null ? exceptionTruncated : null,
-            ActivityId = r.ActivityId,
+            ActivityId = IdColumn.ToCanonicalString(r.ActivityId),
             TraceId = r.TraceId,
             SpanId = r.SpanId,
             Application = r.Application,

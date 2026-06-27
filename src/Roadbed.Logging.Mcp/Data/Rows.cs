@@ -9,7 +9,9 @@ using System;
  */
 internal sealed class ActivityRow
 {
-    public string Id { get; set; } = string.Empty;
+    // uuid-typed UUIDv7 value: MySqlConnector surfaces it as a Guid or as a string depending on
+    // the connection's guid handling. object? tolerates either; IdColumn renders the canonical string.
+    public object? Id { get; set; }
 
     public DateTime CreatedOn { get; set; }
 
@@ -43,9 +45,9 @@ internal sealed class ActivityRow
 
     public int? ProcessId { get; set; }
 
-    public string? ParentActivityId { get; set; }
+    public object? ParentActivityId { get; set; }
 
-    public string? RootActivityId { get; set; }
+    public object? RootActivityId { get; set; }
 
     public string? TraceId { get; set; }
 
@@ -92,7 +94,9 @@ internal sealed class LogRow
 
     public string? ExceptionType { get; set; }
 
-    public string? ActivityId { get; set; }
+    // uuid-typed UUIDv7 value; object? tolerates a Guid or string from the connector and
+    // IdColumn renders the canonical string.
+    public object? ActivityId { get; set; }
 
     public string? TraceId { get; set; }
 
@@ -186,9 +190,11 @@ internal sealed class ExceptionRow
 
 internal sealed class LineageLinkRow
 {
-    public string ActivityId { get; set; } = string.Empty;
+    // activity_input.(activity_id|input_activity_id): uuid-typed UUIDv7 values. object? tolerates a
+    // Guid or string from the connector; IdColumn renders the canonical string.
+    public object? ActivityId { get; set; }
 
-    public string InputActivityId { get; set; } = string.Empty;
+    public object? InputActivityId { get; set; }
 
     public string? InputRole { get; set; }
 

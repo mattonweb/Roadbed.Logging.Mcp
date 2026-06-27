@@ -130,10 +130,10 @@ internal static class ToolSupport
         var created = ParseIsoOrNull(createdOnHint, "created_on");
         var started = ParseIsoOrNull(startedOnHint, "started_on");
         var completed = ParseIsoOrNull(completedOnHint, "completed_on");
-        var ulid = UlidTimestamp.TryGetTimestampUtc(activityId);
+        var idStamp = Uuid7Timestamp.TryGetTimestampUtc(activityId);
 
-        var lower = new[] { started, created, ulid }.FirstOrDefault(t => t is not null);
-        var upper = new[] { completed, created, ulid }.FirstOrDefault(t => t is not null);
+        var lower = new[] { started, created, idStamp }.FirstOrDefault(t => t is not null);
+        var upper = new[] { completed, created, idStamp }.FirstOrDefault(t => t is not null);
 
         if (lower is null && upper is null)
         {

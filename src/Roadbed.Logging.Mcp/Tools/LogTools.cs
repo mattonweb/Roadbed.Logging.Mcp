@@ -23,7 +23,7 @@ public static class LogTools
     /// <param name="repository">The injected repository.</param>
     /// <param name="registry">The injected source registry.</param>
     /// <param name="config">The injected configuration.</param>
-    /// <param name="activityId">The owning activity ULID.</param>
+    /// <param name="activityId">The owning activity id.</param>
     /// <param name="createdOn">Optional timestamp hint.</param>
     /// <param name="source">Optional source name.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
@@ -31,12 +31,12 @@ public static class LogTools
     [McpServerTool(Name = "activity_log_summary")]
     [Description("Cheap triage of a run's logs before pulling lines: total, counts_by_level, first/last event, "
         + "top categories, and exception types with a sample message. The log window is derived from the hint or "
-        + "the ULID timestamp. Adds a note when the window predates the ~90-day log retention.")]
+        + "the id's embedded UUIDv7 timestamp. Adds a note when the window predates the ~90-day log retention.")]
     public static Task<string> ActivityLogSummary(
         LoggingRepository repository,
         ISourceRegistry registry,
         McpConfig config,
-        [Description("The owning activity ULID (required).")]
+        [Description("The owning activity id, a UUIDv7 (required).")]
         string activityId,
         [Description("Optional timestamp hint, ISO-8601 UTC (created_on/started_on), to bound the log window.")]
         string? createdOn = null,
@@ -60,7 +60,7 @@ public static class LogTools
     /// <param name="repository">The injected repository.</param>
     /// <param name="registry">The injected source registry.</param>
     /// <param name="config">The injected configuration.</param>
-    /// <param name="activityId">The owning activity ULID.</param>
+    /// <param name="activityId">The owning activity id.</param>
     /// <param name="minLevel">Minimum level name.</param>
     /// <param name="categoryContains">Optional category substring.</param>
     /// <param name="messageContains">Optional message substring.</param>
@@ -77,13 +77,13 @@ public static class LogTools
     /// <returns>Compact JSON page of log entries.</returns>
     [McpServerTool(Name = "activity_logs")]
     [Description("A run's raw log lines (keyset-paginated). min_level defaults to Information. Window hints "
-        + "(created_on/started_on/completed_on) bound event_time_utc for partition pruning; the ULID timestamp is "
+        + "(created_on/started_on/completed_on) bound event_time_utc for partition pruning; the id's UUIDv7 timestamp is "
         + "used otherwise. Adds a note when the window predates the ~90-day log retention.")]
     public static Task<string> ActivityLogs(
         LoggingRepository repository,
         ISourceRegistry registry,
         McpConfig config,
-        [Description("The owning activity ULID (required).")]
+        [Description("The owning activity id, a UUIDv7 (required).")]
         string activityId,
         [Description("Minimum level: Trace, Debug, Information (default), Warning, Error, Critical.")]
         string? minLevel = null,

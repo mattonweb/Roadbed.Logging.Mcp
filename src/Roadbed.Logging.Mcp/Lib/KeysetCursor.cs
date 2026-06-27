@@ -24,7 +24,7 @@ public static class KeysetCursor
     /// Encodes a partition key and identifier into an opaque cursor token.
     /// </summary>
     /// <param name="partitionKey">The partition-key timestamp of the last row.</param>
-    /// <param name="id">The identifier of the last row (ULID or numeric, as text).</param>
+    /// <param name="id">The identifier of the last row (UUIDv7 or numeric, as text).</param>
     /// <returns>An opaque, round-trippable cursor token.</returns>
     public static string Encode(DateTime partitionKey, string id)
     {
