@@ -39,7 +39,7 @@ activity id like the CRUDALBT "B" tier.
 - **MUST** install the three table DDL scripts (`activity`, `activity_input`, `log_entries`) against the target schema **before** the host starts. Roadbed.Logging does not run schema migrations. The shipped MySQL scripts pre-create 10 years of monthly partitions (2026-01 .. 2035-12) on all three tables — no forward-rollover routine is needed until late 2035.
 - **MUST** schedule a partition-drop routine on MySQL: drop partitions older than **12 months** for `activity` and `activity_input`, and older than **90 days** for `log_entries`. **Roadbed.Logging does not ship this routine** — the consuming app builds it (a stored proc invoked by a Roadbed.Scheduling job, or a MySQL EVENT). On SQLite, run the equivalent `DELETE FROM …` statements on the same cadence.
 - **MUST** pass the `LoggingActivityScope` to `HeartbeatAsync` / `CompleteAsync` / `FailAsync` instead of the bare activity id whenever the scope is in scope. The scope carries the row's `created_on`, which the framework includes in the UPDATE's WHERE clause so MySQL prunes to the single monthly partition that owns the row. The id-only overloads are kept for legacy / external callers but probe every monthly partition (~120).
-- **MUST** treat all stored timestamps as UTC. The DDL defaults `created_on` and `recorded_on` to `UTC_TIMESTAMP(6)` (MySQL) / `strftime('%Y-%m-%dT%H:%M:%fZ','now')` (SQLite); the framework's UPDATE path stamps `last_modified_on` with `DateTime.UtcNow` on every call. `last_modified_on`'s `ON UPDATE CURRENT_TIMESTAMP(6)` clause is a safety net only — the explicit set wins.
+- **MUST** treat all stored timestamps as UTC. The DDL defaults `created_on` and `recorded_on` to `UTC_TIMESTAMP(6)` (MySQL) / `strftime('%Y-%m-%dT%H:%M:%fZ','now')` (SQLite); the framework's UPDATE path stamps `last_modified_on` with the UTC instant sourced from the injected `TimeProvider` (`_timeProvider.GetUtcNow().UtcDateTime`) on every call. `last_modified_on`'s `ON UPDATE CURRENT_TIMESTAMP(6)` clause is a safety net only — the explicit set wins.
 - **MUST** call `service.CompleteAsync(...)` or `service.FailAsync(...)` explicitly when a run ends. Disposing the `LoggingActivityScope` pops the ambient MEL scope and stops the diagnostic Activity, but it does **not** record a terminal status.
 - **MUST** use structured log templates (`logger.LogInformation("Loaded {RowCount}", count)`) — the exporter splits the template (stored as `message_template`) from the named args (stored as `properties` JSON) for downstream aggregation. Interpolated `$"..."` strings produce a single rendered message with no template.
 
@@ -54,7 +54,7 @@ activity id like the CRUDALBT "B" tier.
 - **MUST NOT** read `IConfiguration` from inside Roadbed.Logging-aware code expecting the library to honor it. The library only sees `LoggingOptions` and `ILoggingDatabaseFactory` from DI.
 - **MUST NOT** add a standalone `UNIQUE` on `activity.id` or any other partitioned-table single column. MySQL requires every unique key on a partitioned InnoDB table to contain the partition column, so the only PK is the composite one. Uniqueness of `activity.id` is guaranteed by the caller's ULID, not by a DB constraint.
 - **MUST NOT** add foreign keys between the three tables (or from them to anything else). Partitioned InnoDB tables cannot have FKs. The lineage edges in `activity_input` are soft references on purpose.
-- **MUST NOT** rely on the `last_modified_on` server-side `ON UPDATE` trigger to be UTC. The framework's UPDATE statements pass an explicit `@LastModifiedOn = DateTime.UtcNow` parameter that overrides the trigger. Custom queries that update the row outside the framework should do the same — or set the connection's session `time_zone` to `+00:00`.
+- **MUST NOT** rely on the `last_modified_on` server-side `ON UPDATE` trigger to be UTC. The framework's UPDATE statements pass an explicit `@LastModifiedOn` parameter sourced from the injected `TimeProvider.GetUtcNow().UtcDateTime` that overrides the trigger. Custom queries that update the row outside the framework should pass an equivalent UTC value — or set the connection's session `time_zone` to `+00:00`.
 - **MUST NOT** re-register `LoggingChannel` in DI. `LoggingModule.Register` (invoked by the provider installer that `AddRoadbedDbLogging<…>()` runs) registers it as a process-wide shared instance built from `LoggingOptions`; the host writer (in the host container) and every producer-side OTel exporter (in any container — host, `ServiceLocator` snapshot, or test fixture) all need to resolve the **same** object. Overwriting that registration in `Program.cs` (e.g. via `services.AddSingleton<LoggingChannel>(new LoggingChannel(...))`) is what creates the "`activity` rows write but `log_entries` stays empty" symptom.
 
 ## Consuming-application host wiring
@@ -339,7 +339,7 @@ await this._activities.UpdateAsync(
         ActivityId = scope.ActivityId,
         CreatedOn  = scope.CreatedOn,           // enables MySQL partition pruning
         Target = $"ops.{table}",                // discovered after Begin
-        ParametersJson = JsonConvert.SerializeObject(currentParameters),
+        ParametersJson = JsonSerializer.Serialize(currentParameters, RoadbedJson.Options),
         RecordsImpacted = runningTotal,
     },
     cancellationToken);
@@ -484,7 +484,7 @@ Composite-PK rules (load-bearing):
 ### UTC contract
 
 - `created_on`, `recorded_on` — server-side `DEFAULT (UTC_TIMESTAMP(6))` (MySQL) / `strftime('%Y-%m-%dT%H:%M:%fZ','now')` (SQLite). Connection-time-zone-independent — important for the partition key.
-- `last_modified_on` — declares `ON UPDATE CURRENT_TIMESTAMP(6)` as a safety net, but the framework's UPDATE path passes an explicit `@LastModifiedOn = DateTime.UtcNow` parameter that overrides it. The column stays UTC even when the session `time_zone` is not.
+- `last_modified_on` — declares `ON UPDATE CURRENT_TIMESTAMP(6)` as a safety net, but the framework's UPDATE path passes an explicit `@LastModifiedOn` parameter (sourced from the injected `TimeProvider.GetUtcNow().UtcDateTime`) that overrides it. The column stays UTC even when the session `time_zone` is not.
 
 ### SQLite (no partitioning)
 

@@ -80,18 +80,18 @@ Pick the smallest interface that covers the operations you need:
 ```csharp
 namespace Foo.Sdk;
 
-using Newtonsoft.Json;
+using System.Text.Json.Serialization;
 using Roadbed.Crud;
 
 public sealed record Foo : BaseEntityRecord<string>
 {
-    [JsonProperty("id")]
+    [JsonPropertyName("id")]
     public override string? Id { get; set; }
 
-    [JsonProperty("name")]
+    [JsonPropertyName("name")]
     required public string Name { get; set; }
 
-    [JsonProperty("description")]
+    [JsonPropertyName("description")]
     public string? Description { get; set; }
 }
 ```

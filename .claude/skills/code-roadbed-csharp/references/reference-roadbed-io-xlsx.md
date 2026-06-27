@@ -101,7 +101,7 @@ await activities.UpdateAsync(new LoggingActivityUpdateRequest
 {
     ActivityId = scope.ActivityId,
     CreatedOn = scope.CreatedOn,
-    ParametersJson = JsonConvert.SerializeObject(new { sourceUrl, sha256 = dl.Data.ContentSha256 }),
+    ParametersJson = JsonSerializer.Serialize(new { sourceUrl, sha256 = dl.Data.ContentSha256 }, RoadbedJson.Options),
 }, cancellationToken);
 
 // 2. Stream rows in batches straight into the bronze bulk insert.
