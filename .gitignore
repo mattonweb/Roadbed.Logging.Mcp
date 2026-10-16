@@ -440,3 +440,6 @@ FodyWeavers.xsd
 
 # Shared skill reached by junction point from C:\Source\Roadbed\skills\code-roadbed-csharp (see REPO-SETUP.md in the Signalbox repo); never commit the junction
 .claude/skills/code-roadbed-csharp/
+
+# Shared skill reached by junction point from C:\Source\Signalbox\skills\code-csharp-standards (see REPO-SETUP.md in the Signalbox repo); never commit the junction
+.claude/skills/code-csharp-standards/
