@@ -1,5 +1,13 @@
 # CLAUDE.md — Roadbed.Logging.Mcp
 
+## Recent changes (attended edits to this file — read, then carry on)
+
+- **2026-10-17, late (attended session with Matt):** a git-guardrail hook is wired in `.claude/settings.json`, reached by
+  junction at `.claude/hooks/git-guardrail` from the Signalbox repo (gitignored). Profile `branch`: it refuses `git commit`
+  and `git push` on `main` and allows them only on `feature/*` or `hotfix/*` branches; merge, rebase, reset and the
+  destructive shapes are refused everywhere. Your working agreement is unchanged and still binds; the hook is a floor
+  under it, and a refusal names the rule. Nothing else changed.
+
 Orientation for Claude Code sessions in this repo. The README describes the server (a read-only MCP server over the
 `Roadbed.Logging` schema) and its tool catalog; `docs/` holds the design. This file exists to hold what the shared
 skills require a repo to state for itself. It is not a working agreement: none has been written for this repo.
