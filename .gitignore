@@ -452,3 +452,6 @@ FodyWeavers.xsd
 
 # Shared hook reached by junction point from C:\Source\Signalbox\tools\git-guardrail (see REPO-SETUP.md in the Signalbox repo); never commit the junction
 .claude/hooks/git-guardrail/
+
+# MCP client config carries a live hub bearer key - never commit
+.mcp.json

@@ -14,5 +14,69 @@
         ]
       }
     ]
+  },
+  "permissions": {
+    "defaultMode": "default",
+    "allow": [
+      "mcp__hub-cto-hub__hub_claim_messages",
+      "mcp__hub-cto-hub__hub_respond",
+      "mcp__hub-cto-hub__hub_send",
+      "mcp__hub-cto-hub__hub_sent",
+      "mcp__hub-cto-hub__hub_roster",
+      "mcp__hub-cto-hub__hub_get_attachment",
+      "Bash(awk:*)",
+      "Bash(cat:*)",
+      "Bash(cd:*)",
+      "Bash(comm:*)",
+      "Bash(cut:*)",
+      "Bash(diff:*)",
+      "Bash(dotnet --info)",
+      "Bash(dotnet --version)",
+      "Bash(dotnet build:*)",
+      "Bash(dotnet test:*)",
+      "Bash(echo:*)",
+      "Bash(file:*)",
+      "Bash(find:*)",
+      "Bash(git:*)",
+      "Bash(grep:*)",
+      "Bash(head:*)",
+      "Bash(join:*)",
+      "Bash(ls:*)",
+      "Bash(netstat:*)",
+      "Bash(od:*)",
+      "Bash(printf:*)",
+      "Bash(sort:*)",
+      "Bash(tail:*)",
+      "Bash(tr:*)",
+      "Bash(uniq:*)",
+      "Bash(unzip -p:*)",
+      "Bash(wc:*)",
+      "PowerShell(Get-NetTCPConnection:*)",
+      "PowerShell(Get-Process:*)",
+      "PowerShell(Select-Object:*)",
+      "PowerShell(dotnet build:*)",
+      "PowerShell(dotnet test:*)"
+    ],
+    "deny": [
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(**/secrets/**)",
+      "Bash(cat secrets:*)",
+      "Bash(cat .env:*)"
+    ]
+  },
+  "env": {
+    "AGENT_GIT_IDENTITY": "github-app",
+    "GIT_CONFIG_COUNT": "3",
+    "GIT_CONFIG_KEY_0": "credential.helper",
+    "GIT_CONFIG_VALUE_0": "",
+    "GIT_CONFIG_KEY_1": "credential.helper",
+    "GIT_CONFIG_VALUE_1": "!\"$HOME/bin/agent-git-credential/git-credential-github-app.exe\"",
+    "GIT_CONFIG_KEY_2": "credential.useHttpPath",
+    "GIT_CONFIG_VALUE_2": "true",
+    "GIT_AUTHOR_NAME": "Coding Agent - Roadbed.Logging.Mcp",
+    "GIT_AUTHOR_EMAIL": "344589112+coding-agent-roadbed-logging-mcp[bot]@users.noreply.github.com",
+    "GIT_COMMITTER_NAME": "Coding Agent - Roadbed.Logging.Mcp",
+    "GIT_COMMITTER_EMAIL": "344589112+coding-agent-roadbed-logging-mcp[bot]@users.noreply.github.com"
   }
 }
