@@ -2,6 +2,10 @@
 
 ## Recent changes (attended edits to this file — read, then carry on)
 
+- **2026-11-07 (attended session with Matt):** `tools/publish-mcp.ps1` now exists and is the one path into
+  `C:\Workspace\Apps\Roadbed.Logging.Mcp`, which the Log Analyst's `.mcp.json` now names (it ran a copy from its own home before).
+  It is a deploy: run only when a Build Order says to publish. The two sentences about the exe being placed by hand are
+  rewritten; the `publish` scope is added; `.claude/settings.json` allows exactly `powershell -NoProfile -ExecutionPolicy Bypass -File tools\publish-mcp.ps1`.
 - **2026-11-07 (attended session with Matt):** you may now read and copy from `C:\Workspace\Assemblies`
   (`.claude/settings.json` gained the folder under `additionalDirectories` plus `cp`, `Copy-Item`, `ls` and
   `sha256sum` rules against it), so a Build Order can carry a re-vendor step instead of waiting on Matt's hand
@@ -32,9 +36,10 @@ Orientation for Claude Code sessions in this repo. The README describes the serv
 agreement that governs how work reaches this repo and leaves it, and it holds what the shared skills require a repo
 to state for itself.
 
-**A change here ships to the Log Analyst agent that runs this server.** The built exe is placed by hand into that
-agent's home; a build order names the behaviour that must change and the behaviour that must not. If it does not,
-ask before building. A finished build changes nothing until Matt places it.
+**A change here ships to the Log Analyst agent that runs this server.** The built exe is published into
+`C:\Workspace\Apps\Roadbed.Logging.Mcp`, which that agent's `.mcp.json` names; a build order names the behavior that must
+change and the behavior that must not. If it does not, ask before building. A finished build changes nothing until the
+exe is published, and a merge is not a publish.
 
 ## Working agreement — you own the branch; Matt owns `main`
 You deliver work by the **author loop** in the `devops-git-conventions` skill:
@@ -49,8 +54,7 @@ This section adds only what is specific to this repository.
   helper on this machine. Run `gh` from the Bash tool; from PowerShell it is the bare CLI and will ask you to log in,
   which means "use Bash", not "log in". If `git push` or `gh` under Bash asks you to authenticate, the wiring is
   broken: stop, report the exact command and message, and do not try to log in.
-- **What a merge changes downstream:** the built exe is placed by hand into the consuming agent's home; a merged change
-  changes nothing for that agent until Matt publishes and places it.
+- **What a merge changes downstream:** nothing, until the exe is published. `tools/publish-mcp.ps1` is the one path into `C:\Workspace\Apps\Roadbed.Logging.Mcp`, the folder the Log Analyst runs the exe from, run as `powershell -NoProfile -ExecutionPolicy Bypass -File tools\publish-mcp.ps1` from the repository root. **It is a deploy, and you run it only when a Build Order says to publish**, never as a side step of a merge or because a merge landed: the next session each consuming seat starts runs the new build. It refuses unless the checkout is a clean `main` equal to `origin/main` and no process is running from that folder, cleans and publishes Release (single-file, win-x64, framework-dependent, from the project's own properties), mirrors the output into the folder, and writes `publish-manifest.json` beside the exe (commit, version, each file's size and SHA-256). Quote the manifest's commit, the version and the exe's SHA-256 in the hand-back; the order names the seats that run the exe, and their leaders are told through it.
 - **`main`:** `main` takes pull requests only.
 - **Matt is the reviewer and the only one who merges.** Until the pipeline's review agents exist, he stands in for
   them at S24.
@@ -95,7 +99,7 @@ defect in your hand-back. Each skill there is a Windows junction to its home rep
 (`REPO-SETUP.md` in the Signalbox repo), so an edit through it lands in another repo's working tree.
 
 **Commit scopes (`devops-git-conventions` section 3): one scope per commit, from this list, or none when the
-change spans the repository.** `tools` (the tool catalog the server exposes); `deps` (package and vendored-DLL updates), `skills` (junctions and their gitignore lines), `charter` (this file).
+change spans the repository.** `tools` (the tool catalog the server exposes); `deps` (package and vendored-DLL updates), `skills` (junctions and their gitignore lines), `publish` (the publish script under `tools/`), `charter` (this file).
 A scope that is not here is added to this list in its own commit before the commit that uses it; never invented in
 the commit. Listed 2026-10-17 from the scopes this repo's history already used (`git log --format=%s | grep -oE '^[a-z]+\([^)]+\)'`) and its project layout.
 
